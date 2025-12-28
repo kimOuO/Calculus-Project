@@ -1,0 +1,83 @@
+services:
+  # PostgreSQL - SQL Database (students, score, test)
+  postgres:
+    image: postgres:15-alpine
+    container_name: calculus_postgres
+    environment:
+      POSTGRES_DB: calculus_db
+      POSTGRES_USER: calculus_user
+      POSTGRES_PASSWORD: calculus_password123
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U calculus_user -d calculus_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - calculus_network
+
+  # MongoDB - NoSQL Database (test_pic_information)
+  mongodb:
+    image: mongo:7.0
+    container_name: calculus_mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: calculus_user
+      MONGO_INITDB_ROOT_PASSWORD: calculus_password123
+      MONGO_INITDB_DATABASE: calculus_nosql_db
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - calculus_network
+
+  # pgAdmin - PostgreSQL Management Interface
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: calculus_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@calculus.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5051:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - calculus_network
+
+  # Mongo Express - MongoDB Management Interface
+  mongo-express:
+    image: mongo-express:latest
+    container_name: calculus_mongo_express
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: calculus_user
+      ME_CONFIG_MONGODB_ADMINPASSWORD: calculus_password123
+      ME_CONFIG_MONGODB_URL: mongodb://calculus_user:calculus_password123@calculus_mongodb:27017/
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: admin123
+    ports:
+      - "8081:8081"
+    depends_on:
+      - mongodb
+    networks:
+      - calculus_network
+
+volumes:
+  postgres_data:
+  mongodb_data:
+  pgadmin_data:
+
+networks:
+  calculus_network:
+    driver: bridge

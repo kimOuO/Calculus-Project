@@ -1,0 +1,7 @@
+# Base Requirements
+Django>=4.2.0,<5.0.0
+djangorestframework>=3.14.0
+django-cors-headers>=4.0.0
+psycopg2-binary>=2.9.0
+pymongo>=4.5.0
+python-dotenv>=1.0.0
