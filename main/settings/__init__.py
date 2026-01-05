@@ -1,9 +1,9 @@
 """
 Settings package - 根據環境變數選擇配置
 """
-import os
+from main.utils.env_loader import get_env
 
-environment = os.environ.get('DJANGO_ENV', 'local')
+environment = get_env('DJANGO_ENV', 'local')
 
 if environment == 'production':
     from .production import *

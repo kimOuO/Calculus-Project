@@ -22,12 +22,13 @@ class NoSqlDbBusinessService:
         mongo_port = int(get_env("MONGO_PORT", "27017"))
         mongo_user = get_env("MONGO_USER", "")
         mongo_password = get_env("MONGO_PASSWORD", "")
-        mongo_db = get_env("MONGO_DB", "calculus_nosql_db")
+        mongo_db = get_env("MONGO_DB", "calculus_oom_db")
         
         if mongo_user and mongo_password:
-            connection_string = f"mongodb://{mongo_user}:{mongo_password}@{mongo_host}:{mongo_port}/{mongo_db}?authSource=admin"
+            # 連接到 admin 數據庫進行認證
+            connection_string = f"mongodb://{mongo_user}:{mongo_password}@{mongo_host}:{mongo_port}/?authSource=admin"
         else:
-            connection_string = f"mongodb://{mongo_host}:{mongo_port}/{mongo_db}"
+            connection_string = f"mongodb://{mongo_host}:{mongo_port}/"
         
         return MongoClient(connection_string)
     

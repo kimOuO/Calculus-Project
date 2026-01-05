@@ -5,3 +5,10 @@ django-cors-headers>=4.0.0
 psycopg2-binary>=2.9.0
 pymongo>=4.5.0
 python-dotenv>=1.0.0
+
+# Excel Processing
+openpyxl>=3.1.0
+
+# Chart/Image Generation
+matplotlib>=3.7.0
+Pillow>=10.0.0

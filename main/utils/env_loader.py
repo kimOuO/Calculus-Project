@@ -3,6 +3,11 @@ Environment Loader - 環境變數載入器
 """
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# 自動加載 .env 文件
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+load_dotenv(dotenv_path=BASE_DIR / '.env')
 
 
 def get_env(key: str, default: str = None) -> str:

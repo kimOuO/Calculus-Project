@@ -10,9 +10,10 @@ from django.http import FileResponse, HttpResponse
 from django.db import transaction
 
 from main.apps.Calculus_metadata.services.common import UuidService, TimestampService, ValidationService
-from main.apps.Calculus_metadata.services.business import NoSqlDbBusinessService
+from main.apps.Calculus_metadata.services.business import NoSqlDbBusinessService, SqlDbBusinessService
+from main.apps.Calculus_metadata.models import Test
 from main.utils.response import success_response, error_response
-from main.utils.env_loader import get_env
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +56,29 @@ class TestFiledataActor:
             if not uploaded_files:
                 return error_response("No files uploaded", None, 400)
             
-            # Step 5: 生成 file_uuid
-            file_uuid = UuidService.generate_test_pic_uuid(test_uuid[:8], "file")
+            # Step 4.5: 驗證 test_uuid 是否存在並獲取或創建 file_uuid
+            test = SqlDbBusinessService.get_entity(Test, 'test_uuid', test_uuid)
+            if not test:
+                return error_response("Test not found", None, 404)
+            
+            # 如果該考試已經有 file_uuid，則使用現有的；否則創建新的
+            if test.pt_opt_score_uuid:
+                file_uuid = test.pt_opt_score_uuid
+                # 檢查 MongoDB 中是否存在該文檔
+                existing_doc = NoSqlDbBusinessService.get_document(
+                    TestFiledataActor.COLLECTION_NAME,
+                    {'test_pic_uuid': file_uuid}
+                )
+                is_update = existing_doc is not None
+            else:
+                file_uuid = UuidService.generate_test_pic_uuid(test_uuid[:8], "file")
+                is_update = False
+            
+            # Step 5: 生成時間戳
             timestamp = TimestampService.get_current_timestamp()
             
             # Step 6: 儲存檔案到本地
-            upload_dir = get_env("UPLOAD_DIR", "/app/uploads")
+            upload_dir = settings.UPLOAD_DIR
             os.makedirs(upload_dir, exist_ok=True)
             
             file_paths = []
@@ -75,32 +93,72 @@ class TestFiledataActor:
                 file_paths.append(file_path)
                 logger.info(f"File saved: {file_path}")
             
-            # Step 7: 儲存檔案資訊到 MongoDB
-            document = {
-                'test_pic_uuid': file_uuid,
-                'test_pic': '',
-                'test_pic_histogram': '',
-                'pic_created_at': timestamp,
-                'pic_updated_at': timestamp,
-            }
+            # Step 7: 儲存或更新檔案資訊到 MongoDB
+            if is_update:
+                # 更新現有文檔
+                update_data = {'pic_updated_at': timestamp}
+                
+                if asset_type in ['paper', 'test_pic']:
+                    update_data['test_pic'] = file_paths[0] if file_paths else ''
+                elif asset_type in ['histogram', 'test_pic_histogram']:
+                    update_data['test_pic_histogram'] = file_paths[0] if file_paths else ''
+                
+                NoSqlDbBusinessService.update_document(
+                    TestFiledataActor.COLLECTION_NAME,
+                    {'test_pic_uuid': file_uuid},
+                    update_data
+                )
+                inserted_id = str(existing_doc['_id'])
+            else:
+                # 創建新文檔
+                document = {
+                    'test_pic_uuid': file_uuid,
+                    'test_pic': '',
+                    'test_pic_histogram': '',
+                    'pic_created_at': timestamp,
+                    'pic_updated_at': timestamp,
+                }
+                
+                # 根據 asset_type 決定存儲位置
+                if asset_type in ['paper', 'test_pic']:
+                    document['test_pic'] = file_paths[0] if file_paths else ''
+                elif asset_type in ['histogram', 'test_pic_histogram']:
+                    document['test_pic_histogram'] = file_paths[0] if file_paths else ''
+                
+                # 儲存到 MongoDB
+                inserted_id = NoSqlDbBusinessService.create_document(
+                    TestFiledataActor.COLLECTION_NAME,
+                    document
+                )
             
-            # 根據 asset_type 決定存儲位置
+            # Step 8: 更新 Test 表的 pt_opt_score_uuid 並自動更新狀態
+            update_data = {}
+            if not test.pt_opt_score_uuid:
+                update_data['pt_opt_score_uuid'] = file_uuid
+            
+            # 自動狀態更新邏輯
             if asset_type in ['paper', 'test_pic']:
-                document['test_pic'] = file_paths[0] if file_paths else ''
+                # 上傳考卷時，自動將狀態從「尚未出考卷」更新為「考卷完成」
+                if test.test_states == '尚未出考卷':
+                    update_data['test_states'] = '考卷完成'
+                    update_data['test_updated_at'] = timestamp
+                    logger.info(f"Auto-updating test status to '考卷完成' for test: {test_uuid}")
             elif asset_type in ['histogram', 'test_pic_histogram']:
-                document['test_pic_histogram'] = file_paths[0] if file_paths else ''
+                # 上傳直方圖時，自動將狀態從「考卷完成」更新為「考卷成績結算」
+                if test.test_states == '考卷完成':
+                    update_data['test_states'] = '考卷成績結算'
+                    update_data['test_updated_at'] = timestamp
+                    logger.info(f"Auto-updating test status to '考卷成績結算' for test: {test_uuid}")
             
-            # 儲存到 MongoDB
-            inserted_id = NoSqlDbBusinessService.create_document(
-                TestFiledataActor.COLLECTION_NAME,
-                document
-            )
+            if update_data:
+                SqlDbBusinessService.update_entity(test, update_data)
             
             output = {
                 'file_uuid': file_uuid,
                 'asset_type': asset_type,
                 'file_count': len(file_paths),
-                'mongodb_id': inserted_id
+                'mongodb_id': inserted_id,
+                'test_states': test.test_states if 'test_states' not in update_data else update_data['test_states']
             }
             
             logger.info(f"Files uploaded successfully: {file_uuid}")
@@ -160,12 +218,24 @@ class TestFiledataActor:
             if not os.path.exists(file_path):
                 return error_response("File not found on disk", None, 404)
             
-            # Step 7: 返回檔案
+            # Step 7: 根據文件擴展名判斷 Content-Type
+            file_ext = os.path.splitext(file_path)[1].lower()
+            content_type_map = {
+                '.pdf': 'application/pdf',
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.png': 'image/png',
+                '.gif': 'image/gif',
+                '.txt': 'text/plain',
+            }
+            content_type = content_type_map.get(file_ext, 'application/octet-stream')
+            
+            # Step 8: 返回檔案
             response = FileResponse(open(file_path, 'rb'))
-            response['Content-Type'] = 'image/jpeg'  # 或根據檔案類型判斷
+            response['Content-Type'] = content_type
             response['Content-Disposition'] = f'inline; filename="{os.path.basename(file_path)}"'
             
-            logger.info(f"File retrieved successfully: {file_uuid}")
+            logger.info(f"File retrieved successfully: {file_uuid}, type: {content_type}")
             return response
             
         except json.JSONDecodeError:
@@ -219,7 +289,7 @@ class TestFiledataActor:
                 logger.info(f"Old file deleted: {old_file_path}")
             
             # Step 6: 儲存新檔案
-            upload_dir = get_env("UPLOAD_DIR", "/app/uploads")
+            upload_dir = settings.UPLOAD_DIR
             file_name = f"{file_uuid}_{uploaded_file.name}"
             new_file_path = os.path.join(upload_dir, file_name)
             

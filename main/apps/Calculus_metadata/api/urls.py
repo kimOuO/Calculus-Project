@@ -16,6 +16,8 @@ urlpatterns = [
     path('Student_MetadataWriter/update', StudentActor.update, name='student_update'),
     path('Student_MetadataWriter/delete', StudentActor.delete, name='student_delete'),
     path('Student_MetadataWriter/status', StudentActor.status, name='student_status'),
+    path('Student_MetadataWriter/upload_excel', StudentActor.upload_excel, name='student_upload_excel'),
+    path('Student_MetadataWriter/feedback_excel', StudentActor.feedback_excel, name='student_feedback_excel'),
     
     # Score_MetadataWriter APIs
     path('Score_MetadataWriter/create', ScoreActor.create, name='score_create'),
@@ -24,6 +26,7 @@ urlpatterns = [
     path('Score_MetadataWriter/delete', ScoreActor.delete, name='score_delete'),
     path('Score_MetadataWriter/calculation_final', ScoreActor.calculation_final, name='score_calculation_final'),
     path('Score_MetadataWriter/test_score', ScoreActor.test_score, name='score_test_score'),
+    path('Score_MetadataWriter/step_diagram', ScoreActor.step_diagram, name='score_step_diagram'),
     
     # Test_MetadataWriter APIs
     path('Test_MetadataWriter/create', TestActor.create, name='test_create'),

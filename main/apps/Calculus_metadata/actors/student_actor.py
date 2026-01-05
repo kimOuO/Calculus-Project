@@ -3,9 +3,16 @@ Students Actor - 學生資料管理
 """
 import json
 import logging
+import io
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.db import transaction
+from django.http import HttpResponse
+try:
+    from openpyxl import load_workbook, Workbook
+except ImportError:
+    load_workbook = None
+    Workbook = None
 
 from main.apps.Calculus_metadata.models import Students, Score
 from main.apps.Calculus_metadata.serializers import StudentsWriteSerializer, StudentsReadSerializer
@@ -273,4 +280,217 @@ class StudentActor:
             return error_response("Invalid JSON format", None, 400)
         except Exception as e:
             logger.error(f"Error updating student status: {str(e)}")
+            return error_response(f"Unknown error: {str(e)}", None, 500)
+    
+    @staticmethod
+    @csrf_exempt
+    @require_http_methods(["POST"])
+    @transaction.atomic
+    def upload_excel(request):
+        """
+        批量上傳學生資料 (Excel)
+        POST /api/v0.1/Calculus_oom/Calculus_metadata/Student_MetadataWriter/upload_excel
+        """
+        try:
+            # Step 1: 檢查 openpyxl 是否安裝
+            if load_workbook is None or Workbook is None:
+                return error_response(
+                    "Excel support not available. Please install openpyxl: pip install openpyxl",
+                    None,
+                    500
+                )
+            
+            # Step 2: 解析上傳檔案
+            uploaded_file = request.FILES.get('file')
+            if not uploaded_file:
+                return error_response("No file uploaded", None, 400)
+            
+            logger.info(f"Uploading student Excel file: {uploaded_file.name}")
+            
+            # Step 3: 讀取 Excel
+            try:
+                workbook = load_workbook(filename=io.BytesIO(uploaded_file.read()))
+                sheet = workbook.active
+            except Exception as e:
+                return error_response(f"Invalid Excel file: {str(e)}", None, 400)
+            
+            # Step 4: 解析資料（假設第一行是標題）
+            # 預期格式: student_name | student_number | student_semester
+            created_students = []
+            errors = []
+            
+            for row_idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+                if not row or not any(row):  # 跳過空行
+                    continue
+                
+                try:
+                    # 假設欄位順序: 姓名, 學號, 學期
+                    if len(row) < 3:
+                        errors.append(f"Row {row_idx}: 欄位不足")
+                        continue
+                    
+                    student_name = str(row[0]).strip() if row[0] else None
+                    student_number = str(row[1]).strip() if row[1] else None
+                    student_semester = str(row[2]).strip() if row[2] else None
+                    
+                    if not all([student_name, student_number, student_semester]):
+                        errors.append(f"Row {row_idx}: 必要欄位為空")
+                        continue
+                    
+                    # 驗證資料
+                    data = {
+                        'student_name': student_name,
+                        'student_number': student_number,
+                        'student_semester': student_semester,
+                    }
+                    
+                    serializer = StudentsWriteSerializer(data=data)
+                    if not serializer.is_valid():
+                        errors.append(f"Row {row_idx}: {serializer.errors}")
+                        continue
+                    
+                    # 生成 UUID 和時間戳
+                    student_uuid = UuidService.generate_student_uuid(student_semester)
+                    timestamp = TimestampService.get_current_timestamp()
+                    
+                    # 準備完整數據
+                    complete_data = {
+                        'student_uuid': student_uuid,
+                        'student_name': student_name,
+                        'student_number': student_number,
+                        'student_semester': student_semester,
+                        'student_status': '修業中',
+                        'student_created_at': timestamp,
+                        'student_updated_at': timestamp,
+                    }
+                    
+                    # 創建學生
+                    student = SqlDbBusinessService.create_entity(Students, complete_data)
+                    
+                    # 創建對應的成績記錄
+                    score_uuid = UuidService.generate_score_uuid(student_semester)
+                    score_data = {
+                        'score_uuid': score_uuid,
+                        'f_student_uuid': student_uuid,
+                        'score_quiz1': '',
+                        'score_midterm': '',
+                        'score_quiz2': '',
+                        'score_finalexam': '',
+                        'score_total': '',
+                        'score_created_at': timestamp,
+                        'score_updated_at': timestamp,
+                    }
+                    SqlDbBusinessService.create_entity(Score, score_data)
+                    
+                    created_students.append(student_uuid)
+                    
+                except Exception as e:
+                    errors.append(f"Row {row_idx}: {str(e)}")
+                    continue
+            
+            # Step 5: 格式化輸出
+            output = {
+                'created_count': len(created_students),
+                'error_count': len(errors),
+                'created_students': created_students,
+                'errors': errors[:10] if errors else []  # 最多返回前 10 個錯誤
+            }
+            
+            logger.info(f"Excel upload completed: {len(created_students)} created, {len(errors)} errors")
+            
+            if len(created_students) > 0:
+                return success_response(
+                    output,
+                    f"Successfully created {len(created_students)} students with {len(errors)} errors",
+                    201
+                )
+            else:
+                return error_response("No students created", output, 400)
+            
+        except Exception as e:
+            logger.error(f"Error uploading Excel: {str(e)}")
+            return error_response(f"Unknown error: {str(e)}", None, 500)
+    
+    @staticmethod
+    @csrf_exempt
+    @require_http_methods(["POST"])
+    def feedback_excel(request):
+        """
+        匯出學生成績 (Excel)
+        POST /api/v0.1/Calculus_oom/Calculus_metadata/Student_MetadataWriter/feedback_excel
+        """
+        try:
+            # Step 1: 檢查 openpyxl 是否安裝
+            if Workbook is None:
+                return error_response(
+                    "Excel support not available. Please install openpyxl: pip install openpyxl",
+                    None,
+                    500
+                )
+            
+            # Step 2: 解析請求
+            data = json.loads(request.body)
+            logger.info(f"Exporting student scores to Excel: {data}")
+            
+            # Step 3: 驗證必要欄位
+            is_valid, missing_keys = ValidationService.validate_required_keys(data, ['student_semester'])
+            if not is_valid:
+                return error_response(f"Missing required keys: {missing_keys}", None, 400)
+            
+            semester = data['student_semester']
+            
+            # Step 4: 查詢該學期所有學生
+            students = SqlDbBusinessService.get_entities(Students, {'student_semester': semester})
+            
+            if not students:
+                return error_response(f"No students found for semester {semester}", None, 404)
+            
+            # Step 5: 創建 Excel 工作簿
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = f"成績_{semester}"
+            
+            # 設定標題行
+            headers = [
+                '學號', '姓名', '學期', '狀態',
+                '第一次小考', '期中考', '第二次小考', '期末考', '總分'
+            ]
+            sheet.append(headers)
+            
+            # Step 6: 填充資料
+            for student in students:
+                # 查詢對應的成績
+                score = SqlDbBusinessService.get_entity(Score, 'f_student_uuid', student.student_uuid)
+                
+                row_data = [
+                    student.student_number,
+                    student.student_name,
+                    student.student_semester,
+                    student.student_status,
+                    score.score_quiz1 if score else '',
+                    score.score_midterm if score else '',
+                    score.score_quiz2 if score else '',
+                    score.score_finalexam if score else '',
+                    score.score_total if score else '',
+                ]
+                sheet.append(row_data)
+            
+            # Step 7: 生成檔案並返回
+            output_stream = io.BytesIO()
+            workbook.save(output_stream)
+            output_stream.seek(0)
+            
+            response = HttpResponse(
+                output_stream.read(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            response['Content-Disposition'] = f'attachment; filename="students_scores_{semester}.xlsx"'
+            
+            logger.info(f"Excel exported successfully for semester {semester}")
+            return response
+            
+        except json.JSONDecodeError:
+            return error_response("Invalid JSON format", None, 400)
+        except Exception as e:
+            logger.error(f"Error exporting Excel: {str(e)}")
             return error_response(f"Unknown error: {str(e)}", None, 500)

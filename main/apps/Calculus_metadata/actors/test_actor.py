@@ -268,7 +268,7 @@ class TestActor:
             if abs(total_weight - 1.0) > 0.001:
                 return error_response("Total weight must equal 1.0", None, 400)
             
-            # Step 4: 更新每個考試的權重
+            # Step 4: 更新每個考試的權重和狀態
             updated_count = 0
             for test_name, weight in weights.items():
                 tests = SqlDbBusinessService.get_entities(Test, {
@@ -279,9 +279,14 @@ class TestActor:
                 for test in tests:
                     update_data = {
                         'test_weight': str(weight),
-                        'test_states': '考卷成績結算',
                         'test_updated_at': TimestampService.get_current_timestamp()
                     }
+                    
+                    # 只有當狀態為"考卷完成"時，才自動更新為"考卷成績結算"
+                    if test.test_states == '考卷完成':
+                        update_data['test_states'] = '考卷成績結算'
+                        logger.info(f"Auto-updating test status to '考卷成績結算' for test: {test.test_name}")
+                    
                     SqlDbBusinessService.update_entity(test, update_data)
                     updated_count += 1
             

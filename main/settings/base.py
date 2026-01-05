@@ -124,10 +124,47 @@ REST_FRAMEWORK = {
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_ALL_ORIGINS = True
 
-# Logging
+# # Logging
+# LOGGING = {
+#     'version': 1,
+#     'disable_existing_loggers': False,
+#     'formatters': {
+#         'verbose': {
+#             'format': '[{asctime}] {levelname} [{name}.{funcName}:{lineno}] {message}',
+#             'style': '{',
+#             'datefmt': '%Y-%m-%d %H:%M:%S',
+#         },
+#     },
+#     'handlers': {
+#         'console': {
+#             'class': 'logging.StreamHandler',
+#             'formatter': 'verbose',
+#         },
+#         'file': {
+#             'class': 'logging.handlers.RotatingFileHandler',
+#             'filename': BASE_DIR / 'logs' / 'django.log',
+#             'maxBytes': 1024 * 1024 * 10,  # 10 MB
+#             'backupCount': 5,
+#             'formatter': 'verbose',
+#         },
+#     },
+#     'root': {
+#         'handlers': ['console', 'file'],
+#         'level': 'INFO',
+#     },
+#     'loggers': {
+#         'django': {
+#             'handlers': ['console', 'file'],
+#             'level': 'INFO',
+#             'propagate': False,
+#         },
+#     },
+# }
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+
     'formatters': {
         'verbose': {
             'format': '[{asctime}] {levelname} [{name}.{funcName}:{lineno}] {message}',
@@ -135,27 +172,32 @@ LOGGING = {
             'datefmt': '%Y-%m-%d %H:%M:%S',
         },
     },
+
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
+            'level': 'INFO',   # 改回 INFO 以顯示 API 日誌
         },
         'file': {
             'class': 'logging.handlers.RotatingFileHandler',
             'filename': BASE_DIR / 'logs' / 'django.log',
-            'maxBytes': 1024 * 1024 * 10,  # 10 MB
+            'maxBytes': 1024 * 1024 * 10,
             'backupCount': 5,
             'formatter': 'verbose',
+            'level': 'INFO',
         },
     },
+
     'root': {
         'handlers': ['console', 'file'],
-        'level': 'INFO',
+        'level': 'INFO',  # 啟用 INFO 級別
     },
+
     'loggers': {
         'django': {
             'handlers': ['console', 'file'],
-            'level': 'INFO',
+            'level': 'INFO',  # 啟用 Django INFO 日誌
             'propagate': False,
         },
     },
