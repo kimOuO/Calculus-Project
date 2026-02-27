@@ -78,13 +78,90 @@ git clone https://github.com/kimOuO/Calculus-Project.git
 cd Calculus-Project
 ```
 
-### 2. 一鍵部署
+### 2. 環境配置（可選）
+系統提供完整的環境變數配置，可根據需求自訂：
+
+#### 🔧 可調整的環境變數
+
+| 類別 | 變數名稱 | 預設值 | 說明 |
+|------|----------|--------|------|
+| **Django 核心** | `DJANGO_SECRET_KEY` | `calculus-oom-secret-key-for-docker-development` | Django 密鑰（生產環境必改） |
+| | `DJANGO_DEBUG` | `True` | 除錯模式（生產環境改為 False） |
+| | `DJANGO_ENV` | `local` | 運行環境（local/production/test） |
+| | `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1,0.0.0.0,*` | 允許訪問的主機名 |
+| **PostgreSQL** | `DB_NAME` | `calculus_db` | 資料庫名稱 |
+| | `DB_USER` | `calculus_user` | 資料庫使用者 |
+| | `DB_PASSWORD` | `calculus_password123` | 資料庫密碼 |
+| | `DB_HOST` | `calculus_postgres` | 資料庫主機（容器內） |
+| | `DB_PORT` | `5432` | 資料庫內部端口 |
+| | `DB_EXTERNAL_PORT` | `5433` | 資料庫外部端口 |
+| **MongoDB** | `MONGO_USER` | `calculus_user` | MongoDB 使用者 |
+| | `MONGO_PASSWORD` | `calculus_password123` | MongoDB 密碼 |
+| | `MONGO_DB` | `calculus_nosql_db` | MongoDB 資料庫名稱 |
+| | `MONGO_HOST` | `calculus_mongodb` | MongoDB 主機（容器內） |
+| | `MONGO_PORT` | `27017` | MongoDB 內部端口 |
+| | `MONGO_EXTERNAL_PORT` | `27017` | MongoDB 外部端口 |
+| **pgAdmin** | `PGADMIN_EMAIL` | `admin@calculus.com` | pgAdmin 登入 Email |
+| | `PGADMIN_PASSWORD` | `admin123` | pgAdmin 登入密碼 |
+| | `PGADMIN_EXTERNAL_PORT` | `5051` | pgAdmin 外部端口 |
+| **後端服務** | `BACKEND_EXTERNAL_PORT` | `8000` | Django API 外部端口 |
+| | `BACKEND_IMAGE_NAME` | `calculus-backend` | Docker 映像名稱 |
+| | `BACKEND_CONTAINER_NAME` | `calculus_backend` | 後端容器名稱 |
+| **容器配置** | `POSTGRES_CONTAINER` | `calculus_postgres` | PostgreSQL 容器名稱 |
+| | `MONGODB_CONTAINER` | `calculus_mongodb` | MongoDB 容器名稱 |
+| | `PGADMIN_CONTAINER` | `calculus_pgadmin` | pgAdmin 容器名稱 |
+| | `NETWORK_NAME` | `calculus-project_calculus_network` | Docker 網路名稱 |
+| **部署時間** | `DB_WAIT_TIME` | `10` | 資料庫啟動等待時間（秒） |
+| | `BACKEND_WAIT_TIME` | `10` | 後端啟動等待時間（秒） |
+| **其他** | `UPLOAD_DIR` | `/app/uploads` | 檔案上傳目錄 |
+| | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | 允許的前端來源 |
+| | `LOG_LEVEL` | `INFO` | 日誌記錄等級 |
+
+#### 📝 自訂配置範例
+
+**開發環境配置**：
+```bash
+# 編輯 .env 文件
+DJANGO_DEBUG=True
+BACKEND_EXTERNAL_PORT=8000
+DB_EXTERNAL_PORT=5433
+PGLADMIN_EXTERNAL_PORT=5051
+```
+
+**生產環境配置**：
+```bash
+# 安全配置（必須修改）
+DJANGO_SECRET_KEY=your-super-secret-production-key
+DJANGO_DEBUG=False
+DJANGO_ENV=production
+DJANGO_ALLOWED_HOSTS=api.yourdomain.com,yourdomain.com
+
+# 安全密碼
+DB_PASSWORD=your-secure-db-password
+MONGO_PASSWORD=your-secure-mongo-password
+PGLADMIN_PASSWORD=your-secure-admin-password
+
+# 生產端口
+BACKEND_EXTERNAL_PORT=80
+DB_EXTERNAL_PORT=5432
+```
+
+**多環境部署**：
+```bash
+# 測試環境（避免端口衝突）
+BACKEND_EXTERNAL_PORT=8001
+DB_EXTERNAL_PORT=5434
+PGLADMIN_EXTERNAL_PORT=5052
+BACKEND_CONTAINER_NAME=calculus_backend_test
+```
+
+### 3. 一鍵部署
 ```bash
 chmod +x deploy.sh
 ./deploy.sh
 ```
 
-### 3. 驗證部署
+### 4. 驗證部署
 部署完成後，系統將提供以下服務：
 
 | 服務 | 訪問地址 | 說明 |
@@ -94,7 +171,7 @@ chmod +x deploy.sh
 | **PostgreSQL** | localhost:5433 | 資料庫連接 |
 | **MongoDB** | localhost:27017 | 檔案儲存 |
 
-### 4. 測試 API
+### 5. 測試 API
 ```bash
 python3 test_api.py
 ```
@@ -151,14 +228,42 @@ PostgreSQL PostgreSQL PostgreSQL MongoDB PostgreSQL PostgreSQL MongoDB
 # 查看服務狀態
 sudo docker ps
 
-# 查看後端日誌
-sudo docker logs -f calculus_backend
+# 查看後端日誌（使用環境變數）
+sudo docker logs -f ${BACKEND_CONTAINER_NAME:-calculus_backend}
 
 # 重啟服務
-sudo docker restart calculus_backend
+sudo docker restart ${BACKEND_CONTAINER_NAME:-calculus_backend}
 
 # 停止所有服務
-sudo docker-compose down && sudo docker stop calculus_backend
+sudo docker-compose down && sudo docker stop ${BACKEND_CONTAINER_NAME:-calculus_backend}
+```
+
+### 環境變數管理
+```bash
+# 查看當前環境變數配置
+cat .env
+
+# 驗證 docker-compose 實際配置
+sudo docker-compose config
+
+# 查看容器內環境變數
+sudo docker exec ${BACKEND_CONTAINER_NAME:-calculus_backend} env | grep -E "(DB_|MONGO_|DJANGO_)"
+```
+
+### 配置變更流程
+```bash
+# 1. 修改配置
+vim .env
+
+# 2. 重建服務（保留資料）
+sudo docker-compose down
+sudo docker stop ${BACKEND_CONTAINER_NAME:-calculus_backend}
+./deploy.sh
+
+# 3. 完全重置（清除所有資料）
+sudo docker-compose down -v
+sudo docker rmi ${BACKEND_IMAGE_NAME:-calculus-backend}
+./deploy.sh
 ```
 
 ### 資料庫管理
@@ -177,6 +282,11 @@ sudo docker exec -it calculus_mongodb mongosh
 - **PostgreSQL 伺服器**: 已自動註冊為 "Calculus PostgreSQL"
 
 ## 🔧 開發相關
+
+### 環境配置
+- **配置文件**: `.env` - 主要環境變數配置
+- **配置指南**: `CONFIG_GUIDE.md` - 詳細配置說明文件  
+- **參數化部署**: `deploy.sh` - 自動讀取 .env 配置進行部署
 
 ### API 測試
 - **測試腳本**: `python3 test_api.py`
