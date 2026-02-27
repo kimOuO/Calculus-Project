@@ -3,6 +3,7 @@ FROM python:3.11-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV DJANGO_SETTINGS_MODULE=main.settings.local
 
 # Set work directory
 WORKDIR /app
@@ -10,25 +11,36 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     postgresql-client \
+    gcc \
+    python3-dev \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
+
+# Create app user for security
+RUN addgroup --system app && adduser --system --group app
 
 # Install Python dependencies
 COPY requirements/base.txt /app/requirements/base.txt
+COPY requirements/local.txt /app/requirements/local.txt
 RUN pip install --upgrade pip && \
-    pip install -r requirements/base.txt
+    pip install -r requirements/local.txt
 
-# Copy project
-COPY . /app/
+# Copy project files
+COPY --chown=app:app . /app/
 
-# Create necessary directories
-RUN mkdir -p /app/logs /app/uploads /app/staticfiles
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/logs /app/uploads /app/staticfiles /app/media && \
+    chown -R app:app /app && \
+    chmod -R 755 /app
 
-# Collect static files
-RUN python manage.py collectstatic --noinput || true
+# Switch to app user
+USER app
 
-# Run migrations
-RUN python manage.py makemigrations || true
+# Copy entrypoint script
+COPY --chown=app:app docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
 
 EXPOSE 8000
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
