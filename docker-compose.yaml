@@ -2,17 +2,17 @@ services:
   # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
-    container_name: calculus_postgres
+    container_name: ${POSTGRES_CONTAINER:-calculus_postgres}
     environment:
-      POSTGRES_DB: calculus_db
-      POSTGRES_USER: calculus_user
-      POSTGRES_PASSWORD: calculus_password123
+      POSTGRES_DB: ${DB_NAME:-calculus_db}
+      POSTGRES_USER: ${DB_USER:-calculus_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-calculus_password123}
     ports:
-      - "5433:5432"
+      - "${DB_EXTERNAL_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U calculus_user -d calculus_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-calculus_user} -d ${DB_NAME:-calculus_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -22,13 +22,13 @@ services:
   # MongoDB Database  
   mongodb:
     image: mongo:7.0
-    container_name: calculus_mongodb
+    container_name: ${MONGODB_CONTAINER:-calculus_mongodb}
     environment:
-      MONGO_INITDB_ROOT_USERNAME: calculus_user
-      MONGO_INITDB_ROOT_PASSWORD: calculus_password123
-      MONGO_INITDB_DATABASE: calculus_nosql_db
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-calculus_user}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-calculus_password123}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-calculus_nosql_db}
     ports:
-      - "27017:27017"
+      - "${MONGO_EXTERNAL_PORT:-27017}:27017"
     volumes:
       - mongodb_data:/data/db
     healthcheck:
@@ -42,13 +42,13 @@ services:
   # pgAdmin
   pgadmin:
     image: dpage/pgadmin4:latest
-    container_name: calculus_pgadmin
+    container_name: ${PGADMIN_CONTAINER:-calculus_pgadmin}
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@calculus.com
-      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@calculus.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin123}
       PGADMIN_CONFIG_SERVER_MODE: 'False'
     ports:
-      - "5051:80"
+      - "${PGADMIN_EXTERNAL_PORT:-5051}:80"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
       - ./pgadmin_setup.py:/pgadmin4/pgadmin_setup.py
