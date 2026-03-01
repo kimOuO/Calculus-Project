@@ -31,7 +31,13 @@ class Students(models.Model):
         max_length=255,
         help_text="學生學年 (例如: 1141, 1142)"
     )
-    
+    student_email = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="學生電子郵件"
+    )
+
     # Lifecycle Fields
     student_status = models.CharField(
         max_length=255,

@@ -1,4 +1,26 @@
 services:
+  # Django Backend
+  backend:
+    build: .
+    container_name: ${BACKEND_CONTAINER_NAME:-calculus_backend}
+    ports:
+      - "${BACKEND_EXTERNAL_PORT:-8000}:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    networks:
+      calculus_network:
+        aliases:
+          - calculus-backend
+    restart: unless-stopped
+
   # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
@@ -66,3 +88,4 @@ volumes:
 networks:
   calculus_network:
     driver: bridge
+    name: calculus_network

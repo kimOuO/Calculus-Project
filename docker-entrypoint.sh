@@ -95,5 +95,10 @@ echo -e "${GREEN}=========================================${NC}"
 echo -e "${GREEN}🚀 Starting Django Application...${NC}"
 echo -e "${GREEN}=========================================${NC}"
 
-# Execute the main command
-exec "$@"
+# Fix permissions on Docker bind-mount directories so the app user can write
+# (bind mounts are created as root by the Docker daemon on the host)
+chown -R app:app /app/uploads /app/logs 2>/dev/null || true
+chmod -R 755 /app/uploads /app/logs 2>/dev/null || true
+
+# Drop to app user and execute the main command
+exec gosu app "$@"

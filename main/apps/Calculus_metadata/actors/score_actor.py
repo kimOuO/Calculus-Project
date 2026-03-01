@@ -9,7 +9,6 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.db import transaction
 from django.http import HttpResponse
-from django.conf import settings
 try:
     import matplotlib
     matplotlib.use('Agg')  # 使用非 GUI 後端
@@ -186,14 +185,13 @@ class ScoreActor:
             
             # Step 3: 查詢成績
             score = SqlDbBusinessService.get_entity(Score, 'score_uuid', data['score_uuid'])
-            score = SqlDbBusinessService.get_entity(Score, 'score_uuid', data['uid'])
             if not score:
                 return error_response("Score not found", None, 404)
-            
+
             # Step 4: 刪除成績
             SqlDbBusinessService.delete_entity(score)
-            
-            logger.info(f"Score deleted successfully: {data['uid']}")
+
+            logger.info(f"Score deleted successfully: {data['score_uuid']}")
             return success_response(None, "Score deleted successfully", 200)
             
         except json.JSONDecodeError:
@@ -474,18 +472,20 @@ class ScoreActor:
             # Step 7: 生成圖表
             fig, ax = plt.subplots(figsize=(12, 6))
             
-            # 設定中文字體（嘗試使用系統字體）
+            # 設定中文字體
             try:
-                # 嘗試常見的中文字體
-                chinese_fonts = ['Microsoft YaHei', 'SimHei', 'Arial Unicode MS', 'DejaVu Sans']
-                for font_name in chinese_fonts:
-                    try:
-                        plt.rcParams['font.sans-serif'] = [font_name]
-                        plt.rcParams['axes.unicode_minus'] = False
-                        break
-                    except:
-                        continue
-            except:
+                import matplotlib.font_manager as fm
+                # 優先使用容器內安裝的 WenQuanYi Zen Hei 字體
+                wqy_font_path = '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc'
+                if os.path.exists(wqy_font_path):
+                    prop = fm.FontProperties(fname=wqy_font_path)
+                    plt.rcParams['font.sans-serif'] = [prop.get_name(), 'DejaVu Sans']
+                    plt.rcParams['axes.unicode_minus'] = False
+                else:
+                    chinese_fonts = ['WenQuanYi Zen Hei', 'Microsoft YaHei', 'SimHei', 'DejaVu Sans']
+                    plt.rcParams['font.sans-serif'] = chinese_fonts
+                    plt.rcParams['axes.unicode_minus'] = False
+            except Exception:
                 pass
             
             # 準備資料
@@ -516,7 +516,18 @@ class ScoreActor:
             stats_text = f'Total: {len(scores)} | Avg: {avg:.2f} | Median: {median:.2f}'
             ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-            
+
+            # 顯示平均與中位數垂直線
+            # x 座標換算：bar n 以 x=n 為中心，左緣在 x=n-0.5
+            # 因此分數 v 對應 x = v/bin_width - 0.5
+            avg_x = avg / bin_width - 0.5
+            median_x = median / bin_width - 0.5
+            ax.axvline(x=avg_x, color='red', linestyle='--', linewidth=2, alpha=0.85,
+                       label=f'平均: {avg:.1f}')
+            ax.axvline(x=median_x, color='green', linestyle='-', linewidth=2, alpha=0.85,
+                       label=f'中位數: {median:.1f}')
+            ax.legend(loc='upper right', fontsize=10)
+
             plt.tight_layout()
             
             # Step 8: 儲存圖片到記憶體
@@ -538,82 +549,101 @@ class ScoreActor:
             plt.close(fig)
             img_buffer.seek(0)
             
-            # Step 9: 自動上傳直方圖到檔案系統
-            # 先將圖片儲存到臨時檔案
-            import tempfile
-            from django.core.files.uploadedfile import SimpleUploadedFile
-            
-            img_buffer.seek(0)
-            temp_file = SimpleUploadedFile(
-                name=f"histogram_{semester}_{score_field}.{file_ext}",
-                content=img_buffer.read(),
-                content_type=content_type
-            )
-            
-            # 查詢對應的 Test
+            # Step 9: 自動上傳直方圖至 GridFS，並更新 MongoDB / PostgreSQL
+            # 依 score_field 關鍵字找到正確的考試記錄
+            SCORE_FIELD_KEYWORDS = {
+                'score_quiz1': '第一',
+                'score_midterm': '期中',
+                'score_quiz2': '第二',
+                'score_finalexam': '期末',
+            }
             tests = SqlDbBusinessService.get_entities(Test, {'test_semester': semester})
-            
-            if tests:
-                # 找到第一個匹配的考試並上傳直方圖
-                for test in tests:
-                    try:
-                        # 準備上傳資料
-                        upload_dir = settings.UPLOAD_DIR
-                        os.makedirs(upload_dir, exist_ok=True)
-                        
-                        # 儲存檔案
-                        file_name = f"{test.pt_opt_score_uuid or test.test_uuid}_histogram.{file_ext}"
-                        file_path = os.path.join(upload_dir, file_name)
-                        
-                        with open(file_path, 'wb') as f:
-                            img_buffer.seek(0)
-                            f.write(img_buffer.read())
-                        
-                        # 更新或創建 MongoDB 文檔
-                        if test.pt_opt_score_uuid:
-                            file_uuid = test.pt_opt_score_uuid
-                            existing_doc = NoSqlDbBusinessService.get_document(
+            keyword = SCORE_FIELD_KEYWORDS.get(score_field, '')
+            matched_test = None
+            for t in tests:
+                if keyword and keyword in t.test_name:
+                    matched_test = t
+                    break
+
+            if matched_test:
+                try:
+                    # 上傳圖片 binary 至 GridFS
+                    gridfs_filename = f"histogram_{semester}_{score_field}.{file_ext}"
+                    img_buffer.seek(0)
+                    histogram_gridfs_id = NoSqlDbBusinessService.upload_file_to_gridfs(
+                        gridfs_filename, img_buffer.read(), content_type
+                    )
+                    timestamp_now = TimestampService.get_current_timestamp()
+
+                    # 更新或創建 MongoDB 文檔並同步 PostgreSQL
+                    if matched_test.pt_opt_score_uuid:
+                        file_uuid = matched_test.pt_opt_score_uuid
+                        existing_doc = NoSqlDbBusinessService.get_document(
+                            'test_pic_information',
+                            {'test_pic_uuid': file_uuid}
+                        )
+                        if existing_doc:
+                            # 刪除舊 GridFS 直方圖（若存在）
+                            old_gridfs_id = existing_doc.get('test_pic_histogram_gridfs_id', '')
+                            if old_gridfs_id:
+                                try:
+                                    NoSqlDbBusinessService.delete_file_from_gridfs(old_gridfs_id)
+                                except Exception:
+                                    pass
+                            NoSqlDbBusinessService.update_document(
                                 'test_pic_information',
-                                {'test_pic_uuid': file_uuid}
+                                {'test_pic_uuid': file_uuid},
+                                {
+                                    'test_pic_histogram_gridfs_id': histogram_gridfs_id,
+                                    'pic_updated_at': timestamp_now,
+                                }
                             )
-                            
-                            if existing_doc:
-                                # 更新現有文檔
-                                NoSqlDbBusinessService.update_document(
-                                    'test_pic_information',
-                                    {'test_pic_uuid': file_uuid},
-                                    {
-                                        'test_pic_histogram': file_path,
-                                        'pic_updated_at': TimestampService.get_current_timestamp()
-                                    }
-                                )
-                            else:
-                                # 創建新文檔
-                                timestamp_now = TimestampService.get_current_timestamp()
-                                NoSqlDbBusinessService.create_document(
-                                    'test_pic_information',
-                                    {
-                                        'test_pic_uuid': file_uuid,
-                                        'test_pic': '',
-                                        'test_pic_histogram': file_path,
-                                        'pic_created_at': timestamp_now,
-                                        'pic_updated_at': timestamp_now,
-                                    }
-                                )
-                            
-                            # 自動更新考試狀態為「考卷成績結算」
-                            if test.test_states == '考卷完成':
-                                SqlDbBusinessService.update_entity(test, {
-                                    'test_states': '考卷成績結算',
-                                    'test_updated_at': TimestampService.get_current_timestamp()
-                                })
-                                logger.info(f"Auto-updated test status to '考卷成績結算' for test: {test.test_uuid}")
-                            
-                            logger.info(f"Histogram automatically uploaded for test: {test.test_uuid}")
-                            break
-                    except Exception as upload_error:
-                        logger.warning(f"Failed to auto-upload histogram for test {test.test_uuid}: {str(upload_error)}")
-                        continue
+                        else:
+                            NoSqlDbBusinessService.create_document(
+                                'test_pic_information',
+                                {
+                                    'test_pic_uuid': file_uuid,
+                                    'test_uuid': matched_test.test_uuid,
+                                    'test_semester': matched_test.test_semester,
+                                    'test_name': matched_test.test_name,
+                                    'test_pic_gridfs_id': '',
+                                    'test_pic_histogram_gridfs_id': histogram_gridfs_id,
+                                    'pic_created_at': timestamp_now,
+                                    'pic_updated_at': timestamp_now,
+                                }
+                            )
+                    else:
+                        # 考試尚無 file_uuid，建立新 MongoDB 文檔並回填 pt_opt_score_uuid
+                        new_file_uuid = UuidService.generate_test_pic_uuid(matched_test.test_semester, 'file')
+                        NoSqlDbBusinessService.create_document(
+                            'test_pic_information',
+                            {
+                                'test_pic_uuid': new_file_uuid,
+                                'test_uuid': matched_test.test_uuid,
+                                'test_semester': matched_test.test_semester,
+                                'test_name': matched_test.test_name,
+                                'test_pic_gridfs_id': '',
+                                'test_pic_histogram_gridfs_id': histogram_gridfs_id,
+                                'pic_created_at': timestamp_now,
+                                'pic_updated_at': timestamp_now,
+                            }
+                        )
+                        SqlDbBusinessService.update_entity(matched_test, {
+                            'pt_opt_score_uuid': new_file_uuid,
+                            'test_updated_at': timestamp_now,
+                        })
+
+                    # 自動更新考試狀態
+                    if matched_test.test_states == '考卷完成':
+                        SqlDbBusinessService.update_entity(matched_test, {
+                            'test_states': '考卷成績結算',
+                            'test_updated_at': timestamp_now,
+                        })
+                        logger.info(f"Auto-updated test status to '考卷成績結算' for test: {matched_test.test_uuid}")
+
+                    logger.info(f"Histogram uploaded to GridFS ({histogram_gridfs_id}) for test: {matched_test.test_uuid}")
+                except Exception as upload_error:
+                    logger.warning(f"Failed to auto-upload histogram for test {matched_test.test_uuid}: {str(upload_error)}")
             
             # Step 10: 返回圖片給前端
             img_buffer.seek(0)

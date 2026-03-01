@@ -10,9 +10,12 @@ from django.db import transaction
 from django.http import HttpResponse
 try:
     from openpyxl import load_workbook, Workbook
+    from openpyxl.styles import PatternFill, Font
 except ImportError:
     load_workbook = None
     Workbook = None
+    PatternFill = None
+    Font = None
 
 from main.apps.Calculus_metadata.models import Students, Score
 from main.apps.Calculus_metadata.serializers import StudentsWriteSerializer, StudentsReadSerializer
@@ -300,73 +303,75 @@ class StudentActor:
                     500
                 )
             
-            # Step 2: 解析上傳檔案
+            # Step 2: 解析上傳檔案與學期參數
             uploaded_file = request.FILES.get('file')
             if not uploaded_file:
                 return error_response("No file uploaded", None, 400)
-            
-            logger.info(f"Uploading student Excel file: {uploaded_file.name}")
-            
+
+            student_semester = request.POST.get('student_semester', '').strip()
+            if not student_semester:
+                return error_response("Missing required field: student_semester", None, 400)
+
+            logger.info(f"Uploading student Excel file: {uploaded_file.name}, semester: {student_semester}")
+
             # Step 3: 讀取 Excel
             try:
                 workbook = load_workbook(filename=io.BytesIO(uploaded_file.read()))
                 sheet = workbook.active
             except Exception as e:
                 return error_response(f"Invalid Excel file: {str(e)}", None, 400)
-            
-            # Step 4: 解析資料（假設第一行是標題）
-            # 預期格式: student_name | student_number | student_semester
+
+            # Step 4: 解析資料（第一行為標題，從第二行開始）
+            # Excel 欄位格式（對應 student.xlsx）:
+            #   Col A (idx 0): 名字 → student_name
+            #   Col B (idx 1): 姓氏 → 跳過
+            #   Col C (idx 2): 學號 → student_number
+            #   Col D (idx 3): 電子郵件信箱 → student_email
+            #   Col E (idx 4): 科系 → 跳過
+            #   Col F (idx 5): 分組 → 跳過
             created_students = []
             errors = []
-            
+
             for row_idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
                 if not row or not any(row):  # 跳過空行
                     continue
-                
+
                 try:
-                    # 假設欄位順序: 姓名, 學號, 學期
-                    if len(row) < 3:
-                        errors.append(f"Row {row_idx}: 欄位不足")
+                    if len(row) < 4:
+                        errors.append(f"Row {row_idx}: 欄位不足（需要至少 4 欄）")
                         continue
-                    
+
                     student_name = str(row[0]).strip() if row[0] else None
-                    student_number = str(row[1]).strip() if row[1] else None
-                    student_semester = str(row[2]).strip() if row[2] else None
-                    
-                    if not all([student_name, student_number, student_semester]):
-                        errors.append(f"Row {row_idx}: 必要欄位為空")
+                    student_number = str(row[2]).strip() if row[2] else None
+                    student_email = str(row[3]).strip() if row[3] else ''
+
+                    if not student_name or not student_number:
+                        errors.append(f"Row {row_idx}: 名字或學號為空")
                         continue
-                    
-                    # 驗證資料
-                    data = {
-                        'student_name': student_name,
-                        'student_number': student_number,
-                        'student_semester': student_semester,
-                    }
-                    
-                    serializer = StudentsWriteSerializer(data=data)
-                    if not serializer.is_valid():
-                        errors.append(f"Row {row_idx}: {serializer.errors}")
-                        continue
-                    
+
                     # 生成 UUID 和時間戳
                     student_uuid = UuidService.generate_student_uuid(student_semester)
                     timestamp = TimestampService.get_current_timestamp()
-                    
+
                     # 準備完整數據
                     complete_data = {
                         'student_uuid': student_uuid,
                         'student_name': student_name,
                         'student_number': student_number,
                         'student_semester': student_semester,
+                        'student_email': student_email,
                         'student_status': '修業中',
                         'student_created_at': timestamp,
                         'student_updated_at': timestamp,
                     }
-                    
-                    # 創建學生
+
+                    # 創建學生（若學號已存在則跳過）
+                    if Students.objects.filter(student_number=student_number).exists():
+                        errors.append(f"Row {row_idx}: 學號 {student_number} 已存在，跳過")
+                        continue
+
                     student = SqlDbBusinessService.create_entity(Students, complete_data)
-                    
+
                     # 創建對應的成績記錄
                     score_uuid = UuidService.generate_score_uuid(student_semester)
                     score_data = {
@@ -381,9 +386,9 @@ class StudentActor:
                         'score_updated_at': timestamp,
                     }
                     SqlDbBusinessService.create_entity(Score, score_data)
-                    
+
                     created_students.append(student_uuid)
-                    
+
                 except Exception as e:
                     errors.append(f"Row {row_idx}: {str(e)}")
                     continue
@@ -449,32 +454,48 @@ class StudentActor:
             workbook = Workbook()
             sheet = workbook.active
             sheet.title = f"成績_{semester}"
-            
+
             # 設定標題行
             headers = [
-                '學號', '姓名', '學期', '狀態',
-                '第一次小考', '期中考', '第二次小考', '期末考', '總分'
+                '學生名字', '學號', '第一次小考', '期中考', '第二次小考', '期末考', '最後成績', '是否被當'
             ]
             sheet.append(headers)
-            
+
+            # 標題行粗體
+            for cell in sheet[1]:
+                cell.font = Font(bold=True)
+
+            # 紅色填充（用於被當學生）
+            red_fill = PatternFill(start_color='FFCCCC', end_color='FFCCCC', fill_type='solid')
+            red_font = Font(color='CC0000', bold=True)
+
             # Step 6: 填充資料
             for student in students:
-                # 查詢對應的成績
                 score = SqlDbBusinessService.get_entity(Score, 'f_student_uuid', student.student_uuid)
-                
+                is_failed = (student.student_status == '被當')
+                pass_fail_label = '被當' if is_failed else '通過'
+
                 row_data = [
-                    student.student_number,
                     student.student_name,
-                    student.student_semester,
-                    student.student_status,
+                    student.student_number,
                     score.score_quiz1 if score else '',
                     score.score_midterm if score else '',
                     score.score_quiz2 if score else '',
                     score.score_finalexam if score else '',
                     score.score_total if score else '',
+                    pass_fail_label,
                 ]
                 sheet.append(row_data)
-            
+
+                # 對被當學生整行標紅
+                if is_failed:
+                    current_row = sheet.max_row
+                    for col_idx in range(1, len(headers) + 1):
+                        cell = sheet.cell(row=current_row, column=col_idx)
+                        cell.fill = red_fill
+                    # 「是否被當」欄使用紅色粗體字
+                    sheet.cell(row=current_row, column=len(headers)).font = red_font
+
             # Step 7: 生成檔案並返回
             output_stream = io.BytesIO()
             workbook.save(output_stream)

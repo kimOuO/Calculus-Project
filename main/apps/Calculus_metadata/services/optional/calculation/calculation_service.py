@@ -74,22 +74,20 @@ class CalculationService:
         histogram = {}
         min_score = 0
         max_score = 100
-        
-        # 創建級距
-        for start in range(min_score, max_score, bin_width):
-            end = start + bin_width - 1
-            if end > max_score:
-                end = max_score
+
+        # 創建半開區間級距：[0,10), [10,20), ..., [90,100]
+        num_bins = max_score // bin_width
+        for i in range(num_bins):
+            start = i * bin_width
+            end = start + bin_width
             bin_key = f"{start}-{end}"
             histogram[bin_key] = 0
-        
-        # 統計每個級距的數量
+
+        # 統計每個級距的數量（100分歸入最後一個區間）
         for score in scores:
-            bin_index = int(score // bin_width)
+            bin_index = min(int(score // bin_width), num_bins - 1)
             start = bin_index * bin_width
-            end = start + bin_width - 1
-            if end > max_score:
-                end = max_score
+            end = start + bin_width
             bin_key = f"{start}-{end}"
             if bin_key in histogram:
                 histogram[bin_key] += 1

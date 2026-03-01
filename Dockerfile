@@ -4,6 +4,7 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV DJANGO_SETTINGS_MODULE=main.settings.local
+ENV MPLCONFIGDIR=/tmp/matplotlib
 
 # Set work directory
 WORKDIR /app
@@ -14,6 +15,8 @@ RUN apt-get update && apt-get install -y \
     gcc \
     python3-dev \
     netcat-openbsd \
+    fonts-wqy-zenhei \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app user for security
@@ -33,11 +36,8 @@ RUN mkdir -p /app/logs /app/uploads /app/staticfiles /app/media && \
     chown -R app:app /app && \
     chmod -R 755 /app
 
-# Switch to app user
-USER app
-
-# Copy entrypoint script
-COPY --chown=app:app docker-entrypoint.sh /app/docker-entrypoint.sh
+# Copy entrypoint script (run as root so entrypoint can fix bind-mount permissions)
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
 EXPOSE 8000

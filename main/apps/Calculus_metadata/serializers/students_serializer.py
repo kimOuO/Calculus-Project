@@ -23,6 +23,13 @@ class StudentsWriteSerializer(serializers.Serializer):
         required=True,
         help_text="學生學年"
     )
+    student_email = serializers.CharField(
+        max_length=255,
+        required=False,
+        default='',
+        allow_blank=True,
+        help_text="學生電子郵件"
+    )
     student_status = serializers.CharField(
         max_length=255,
         required=False,
@@ -51,6 +58,7 @@ class StudentsReadSerializer(serializers.ModelSerializer):
             'student_name',
             'student_number',
             'student_semester',
+            'student_email',
             'student_status',
             'student_created_at',
             'student_updated_at',
